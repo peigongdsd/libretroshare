@@ -53,101 +53,34 @@ public:
 	uint32_t n ;
 };
 
+inline bool isIn0200Prefix(const struct in6_addr* addr) {
+    const UCHAR* bytes = addr->s6_addr;
+    return ((bytes[0] & 0xFE) == 0x02);
+}
+
 void ExtAddrFinder::run()
 {
-	
 	std::vector<std::string> res ;
+	std::vector<sockaddr_storage> addrs ;
 
-    for(const auto& it : _ip_servers)
-	{
-		std::string ip = "";
-		rsGetHostByNameSpecDNS(it,"myip.opendns.com",ip,2);
-		if(ip != "")
-			res.push_back(ip) ;
-#ifdef EXTADDRSEARCH_DEBUG
-		RS_DBG("ip found through DNS ", it, ": \"", ip, "\"");
-#endif
-	}
+	mFoundV4 = false;
+	mFoundV6 = false;
 
-	if(res.empty())
-	{
-		reset();
-		return ;
-	}
-
-	std::map<sockaddr_storage,ZeroInt> addrV4_votes;
-	std::map<sockaddr_storage,ZeroInt> addrV6_votes;
-	std::string all_addrV4_Found;
-	std::string all_addrV6_Found;
-
-	for(auto curRes : res)
-	{
-		sockaddr_storage addr;
-		sockaddr_storage_clear(addr);
-		bool validIP =   sockaddr_storage_inet_pton(addr, curRes)
-		              && sockaddr_storage_isValidNet(addr);
-		bool isIPv4 = sockaddr_storage_ipv6_to_ipv4(addr);
-		if( validIP && isIPv4 )
-		{
-			addr.ss_family = AF_INET;
-			addrV4_votes[addr].n++ ;
-			all_addrV4_Found += sockaddr_storage_tostring(addr) + "\n";
-		}
-		else if( validIP && !isIPv4)
-		{
-			addr.ss_family = AF_INET6;
-			addrV6_votes[addr].n++ ;
-			all_addrV6_Found += sockaddr_storage_tostring(addr) + "\n";
-		}
-		else
-			RS_ERR("Invalid addresse reported: ", curRes) ;
-
-	}
-
-	if( (0 == addrV4_votes.size()) && (0 == addrV6_votes.size()) )
-	{
-		RS_ERR("Could not find any external address.");
-		reset();
-		return ;
-	}
-
-	if( 1 < addrV4_votes.size() )
-		RS_ERR("Multiple external IPv4 addresses reported: "
-		      , all_addrV4_Found ) ;
-
-	if( 1 < addrV6_votes.size() )
-		RS_ERR("Multiple external IPv6 addresses reported: "
-		      , all_addrV6_Found ) ;
-
-	{
-		RS_STACK_MUTEX(mAddrMtx);
-
-		mSearching = false ;
-		mFoundTS = time(NULL) ;
-
-		// Only save more reported address if not only once.
-		uint32_t admax = 0 ;
-		sockaddr_storage_clear(mAddrV4);
-		for (auto it : addrV4_votes)
-			if (admax < it.second.n)
-			{
-				mAddrV4 = it.first ;
-				mFoundV4 = true ;
-				admax = it.second.n ;
+	getLocalAddresses(addrs);
+	for (auto addr : addrs) {
+		if (addr.ss_family == AF_INET6) {
+			const struct sockaddr_in6 *ptr1 = (const struct sockaddr_in6 *) &addr;
+			if (isIn0200Prefix(&(ptr1->sin6_addr))) {
+				sockaddr_storage_clear(mAddrV6);
+				mFoundV6 = true;
+				mSearching = false ;
+				mFoundTS = time(NULL) ;
+				mAddrV6 = addr;
+				return ;
 			}
-
-		admax = 0 ;
-		sockaddr_storage_clear(mAddrV6);
-		for (auto it : addrV6_votes)
-			if (admax < it.second.n)
-			{
-				mAddrV6 = it.first ;
-				mFoundV6 = true ;
-				admax = it.second.n ;
-			}
-
+		}
 	}
-
+	reset();
 	return ;
 }
 
